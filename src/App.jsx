@@ -10,13 +10,14 @@ export default function App() {
   const [equiposListos, setEquiposListos] = useState(false);
   const [actualizando, setActualizando] = useState(false);
 
-  // Estados de gestión de la lista completa
+  // Estados para la gestión de la base de datos
   const [nuevoNombre, setNuevoNombre] = useState('');
   const [mostrarGestion, setMostrarGestion] = useState(false);
 
-  // NUEVO: Estado para el modo de partido manual/personalizado
+  // Estado para el flujo alternativo manual
   const [modoPersonalizado, setModoPersonalizado] = useState(false);
 
+  // Traer jugadores desde Supabase
   const obtenerJugadores = async () => {
     setCargando(true);
     try {
@@ -27,6 +28,7 @@ export default function App() {
       if (error) {
         console.error('Error de Supabase:', error.message);
       } else {
+        // Ordenamos la tabla por puntos (de mayor a menor)
         const ordenadosPorPuntos = (data || []).sort((a, b) => b.puntos - a.puntos);
         setJugadores(ordenadosPorPuntos);
       }
@@ -40,6 +42,7 @@ export default function App() {
     obtenerJugadores();
   }, []);
 
+  // Agregar un jugador inicializando todas las columnas de tu captura
   const agregarJugador = async (e) => {
     e.preventDefault();
     if (!nuevoNombre.trim()) return;
@@ -47,7 +50,14 @@ export default function App() {
     try {
       const { error } = await supabase
         .from('jugadores')
-        .insert([{ nombre: nuevoNombre.trim(), puntos: 0 }]);
+        .insert([{ 
+          nombre: nuevoNombre.trim(), 
+          puntos: 0,
+          partidos_jugados: 0,
+          partidos_ganados: 0,
+          partidos_perdidos: 0,
+          partidos_empatados: 0
+        }]);
 
       if (error) {
         alert('Error al agregar: ' + error.message);
@@ -60,6 +70,7 @@ export default function App() {
     }
   };
 
+  // Eliminar jugador del sistema
   const eliminarJugador = async (id, nombre, e) => {
     e.stopPropagation(); 
     if (!confirm(`¿Seguro que querés borrar a ${nombre} del sistema?`)) return;
@@ -84,6 +95,7 @@ export default function App() {
     }
   };
 
+  // Selección/Deselección para el flujo estándar (máx 10)
   const anotadoConfirmado = (jugador) => {
     if (confirmados.some(c => c.id === jugador.id)) {
       setConfirmados(confirmados.filter(c => c.id !== jugador.id));
@@ -99,6 +111,7 @@ export default function App() {
     }
   };
 
+  // Algoritmo de balanceo por nivel (Serpentina)
   const armarEquiposSerpentina = () => {
     if (confirmados.length !== 10) return;
 
@@ -119,9 +132,8 @@ export default function App() {
     setEquiposListos(true);
   };
 
-  // NUEVO: Funciones para asignar manualmente a los equipos en el modo personalizado
+  // Asignación a dedo para el modo personalizado (Manual)
   const asignarAEquipoManual = (jugador, destino) => {
-    // Si ya está en ese equipo, lo sacamos
     if (destino === 'A' && equipoA.some(j => j.id === jugador.id)) {
       setEquipoA(equipoA.filter(j => j.id !== jugador.id));
       return;
@@ -131,11 +143,9 @@ export default function App() {
       return;
     }
 
-    // Validar que no se metan más de 5 por equipo
     if (destino === 'A' && equipoA.length >= 5) return alert("El Equipo A ya está lleno (máx 5).");
     if (destino === 'B' && equipoB.length >= 5) return alert("El Equipo B ya está lleno (máx 5).");
 
-    // Sacar de un equipo si se lo mueve al otro
     if (destino === 'A') {
       setEquipoB(equipoB.filter(j => j.id !== jugador.id));
       setEquipoA([...equipoA, jugador]);
@@ -145,44 +155,63 @@ export default function App() {
     }
   };
 
+  // Procesar resultado matemático y guardar en Supabase (Matching con tu captura)
   const registrarResultado = async (resultado) => {
-    if (!confirm('¿Estás seguro de registrar este resultado? Esto actualizará la tabla general.')) return;
+    if (!confirm('¿Estás seguro de registrar este resultado? Esto actualizará las estadísticas.')) return;
     setActualizando(true);
 
-    // En modo personalizado juntamos los integrantes de ambos arrays para saber a quiénes actualizar
     const todosLosJugadoresDelPartido = modoPersonalizado ? [...equipoA, ...equipoB] : confirmados;
 
     try {
       const promesas = todosLosJugadoresDelPartido.map(jugador => {
         let nuevosPuntos = jugador.puntos;
+        let partidosJugados = (jugador.partidos_jugados || 0) + 1; 
+        let partidosGanados = jugador.partidos_ganados || 0;
+        let partidosPerdidos = jugador.partidos_perdidos || 0;
+        let partidosEmpatados = jugador.partidos_empatados || 0; 
+
+        const estaEnA = equipoA.some(j => j.id === jugador.id);
+        const estaEnB = equipoB.some(j => j.id === jugador.id);
 
         if (resultado === 'empate') {
           nuevosPuntos += 1;
-        } else if (resultado === 'ganaA' && equipoA.some(j => j.id === jugador.id)) {
-          nuevosPuntos += 3;
-        } else if (resultado === 'ganaB' && equipoB.some(j => j.id === jugador.id)) {
-          nuevosPuntos += 3;
+          partidosEmpatados += 1; 
+        } else if (resultado === 'ganaA') {
+          if (estaEnA) {
+            nuevosPuntos += 3;
+            partidosGanados += 1;
+          } else if (estaEnB) {
+            partidosPerdidos += 1;
+          }
+        } else if (resultado === 'ganaB') {
+          if (estaEnB) {
+            nuevosPuntos += 3;
+            partidosGanados += 1;
+          } else if (estaEnA) {
+            partidosPerdidos += 1;
+          }
         }
 
         return supabase
           .from('jugadores')
-          .update({ puntos: nuevosPuntos })
+          .update({ 
+            puntos: nuevosPuntos,
+            partidos_jugados: partidosJugados,
+            partidos_ganados: partidosGanados,
+            partidos_perdidos: partidosPerdidos,
+            partidos_empatados: partidosEmpatados 
+          })
           .eq('id', jugador.id);
       });
 
       await Promise.all(promesas);
-      alert('¡Puntajes actualizados con éxito en la nube! 🏆');
+      alert('¡Tabla e historial actualizados con éxito! 🏆');
       
-      // Limpieza de estados generales
-      setConfirmados([]);
-      setEquipoA([]);
-      setEquipoB([]);
-      setEquiposListos(false);
-      setModoPersonalizado(false);
+      resetearTodo();
       await obtenerJugadores();
     } catch (err) {
-      console.error('Error al actualizar puntos:', err);
-      alert('Hubo un error al guardar los puntos.');
+      console.error('Error al actualizar estadísticas:', err);
+      alert('Hubo un error al guardar los datos.');
     } finally {
       setActualizando(false);
     }
@@ -203,13 +232,13 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: '50px 20px', fontFamily: 'sans-serif', maxWidth: '500px', margin: '0 auto' }}>
+    <div style={{ padding: '40px 15px', fontFamily: 'sans-serif', maxWidth: '550px', margin: '0 auto' }}>
       
-      <h1 style={{ fontSize: '24px', lineHeight: '1.3', margin: '0 0 20px 0', color: '#ffffff', textAlign: 'center' }}>
+      <h1 style={{ fontSize: '24px', margin: '0 0 20px 0', color: '#ffffff', textAlign: 'center' }}>
         ⚽ Mezclador de Fútbol 5 ⚽ 
       </h1>
 
-      {/* BOTONES AUXILIARES DE GESTIÓN */}
+      {/* BOTONES AUXILIARES */}
       {!equiposListos && !modoPersonalizado && (
         <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
           <button 
@@ -228,7 +257,7 @@ export default function App() {
         </div>
       )}
 
-      {/* PANEL DE GESTIÓN (AÑADIR/BORRAR BASE DE DATOS GENERAL) */}
+      {/* PANEL DE GESTIÓN (AÑADIR / ELIMINAR) */}
       {mostrarGestion && !equiposListos && !modoPersonalizado && (
         <div style={{ background: '#212529', padding: '15px', borderRadius: '8px', border: '1px solid #343a40', marginBottom: '25px', color: 'white' }}>
           <h4 style={{ margin: '0 0 10px 0' }}>Añadir nuevo jugador al sistema:</h4>
@@ -255,16 +284,14 @@ export default function App() {
         </div>
       )}
 
-      {/* MODO NUEVOS INTEGRANTES: MODO PARTIDO PERSONALIZADO */}
+      {/* VISTA: PARTIDO PERSONALIZADO (MANUAL) */}
       {modoPersonalizado && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2>Configuración Manual</h2>
             <button onClick={resetearTodo} style={{ backgroundColor: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Cancelar</button>
           </div>
-          <p style={{ color: '#aaa', fontSize: '13px' }}>Asigná a los jugadores tocando las letras correspondientes de cada equipo:</p>
-
-          {/* VISTA PREVIA DE LOS EQUIPOS EN CONSTRUCCIÓN */}
+          
           <div style={{ display: 'flex', gap: '10px', margin: '15px 0' }}>
             <div style={{ flex: 1, background: '#e3f2fd', padding: '10px', borderRadius: '6px', color: '#333' }}>
               <strong style={{ color: '#0d47a1' }}>A ({equipoA.length}/5):</strong>
@@ -276,14 +303,13 @@ export default function App() {
             </div>
           </div>
 
-          {/* SELECCIÓN MANUAL DE JUGADORES */}
-          <div style={{ margin: '15px 0', maxHeight: '350px', overflowY: 'auto' }}>
+          <div style={{ margin: '15px 0', maxHeight: '300px', overflowY: 'auto' }}>
             {jugadores.map(j => {
               const enA = equipoA.some(x => x.id === j.id);
               const enB = equipoB.some(x => x.id === j.id);
               return (
                 <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', marginBottom: '6px', background: '#f8f9fa', borderRadius: '6px', color: '#333' }}>
-                  <span style={{ fontWeight: (enA || enB) ? 'bold' : 'normal' }}>{j.nombre}</span>
+                  <span>{j.nombre}</span>
                   <div style={{ display: 'flex', gap: '5px' }}>
                     <button onClick={() => asignarAEquipoManual(j, 'A')} style={{ padding: '6px 12px', backgroundColor: enA ? '#007bff' : '#ccc', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>A</button>
                     <button onClick={() => asignarAEquipoManual(j, 'B')} style={{ padding: '6px 12px', backgroundColor: enB ? '#dc3545' : '#ccc', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>B</button>
@@ -293,51 +319,60 @@ export default function App() {
             })}
           </div>
 
-          {/* BOTONES DE CARGA DE RESULTADOS DIRECTOS */}
-          <div style={{ marginTop: '20px', padding: '15px', background: '#212529', borderRadius: '8px', border: '1px solid #343a40' }}>
+          <div style={{ marginTop: '20px', padding: '15px', background: '#212529', borderRadius: '8px' }}>
             <h4 style={{ marginTop: 0, textAlign: 'center', color: 'white' }}>🏆 Registrar Carga Manual</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <button disabled={actualizando || equipoA.length === 0} onClick={() => registrarResultado('ganaA')} style={{ padding: '10px', backgroundColor: '#0d47a1', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Ganó el Equipo A (+3 pts)
-              </button>
-              <button disabled={actualizando || equipoB.length === 0} onClick={() => registrarResultado('ganaB')} style={{ padding: '10px', backgroundColor: '#b71c1c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Ganó el Equipo B (+3 pts)
-              </button>
-              <button disabled={actualizando || (equipoA.length === 0 && equipoB.length === 0)} onClick={() => registrarResultado('empate')} style={{ padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Hubo Empate (+1 pt)
-              </button>
+              <button disabled={actualizando || equipoA.length === 0} onClick={() => registrarResultado('ganaA')} style={{ padding: '10px', backgroundColor: '#0d47a1', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Ganó el Equipo A</button>
+              <button disabled={actualizando || equipoB.length === 0} onClick={() => registrarResultado('ganaB')} style={{ padding: '10px', backgroundColor: '#b71c1c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Ganó el Equipo B</button>
+              <button disabled={actualizando || (equipoA.length === 0 && equipoB.length === 0)} onClick={() => registrarResultado('empate')} style={{ padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Empate</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* FLUJO ESTÁNDAR: SELECCIÓN DE CONFIRMADOS (SNAKE) */}
+      {/* VISTA PRINCIPAL: TABLA GRANDE DE POSICIONES (ESTÁNDAR) */}
       {!equiposListos && !modoPersonalizado && (
         <div>
-          <h2>Anote los 10 confirmados ({confirmados.length} / 10)</h2>
-          <div style={{ margin: '20px 0' }}>
-            {jugadores.map(jugador => {
+          <h2 style={{ fontSize: '18px', borderBottom: '1px solid #444', paddingBottom: '8px' }}>Tabla de Posiciones</h2>
+          
+          {/* Encabezado completo */}
+          <div style={{ display: 'flex', padding: '10px', fontWeight: 'bold', backgroundColor: '#343a40', borderRadius: '6px 6px 0 0', fontSize: '13px', color: '#fff' }}>
+            <div style={{ flex: 2 }}>Jugador</div>
+            <div style={{ flex: 0.5, textAlign: 'center' }}>J</div>
+            <div style={{ flex: 0.5, textAlign: 'center', color: '#28a745' }}>G</div>
+            <div style={{ flex: 0.5, textAlign: 'center', color: '#ffc107' }}>E</div>
+            <div style={{ flex: 0.5, textAlign: 'center', color: '#dc3545' }}>P</div>
+            <div style={{ flex: 0.7, textAlign: 'right' }}>Pts</div>
+          </div>
+
+          {/* Renderizado de filas interactivo */}
+          <div style={{ marginBottom: '25px' }}>
+            {jugadores.map((jugador) => {
               const yaConfirmo = confirmados.some(c => c.id === jugador.id);
               return (
                 <div 
                   key={jugador.id}
                   onClick={() => anotadoConfirmado(jugador)}
                   style={{
-                    padding: '12px',
-                    marginBottom: '8px',
+                    display: 'flex',
+                    padding: '12px 10px',
+                    borderBottom: '1px solid #343a40',
                     backgroundColor: yaConfirmo ? '#28a745' : '#f8f9fa',
                     color: yaConfirmo ? 'white' : '#333',
-                    border: '1px solid #ddd',
-                    borderRadius: '6px',
                     cursor: 'pointer',
-                    display: 'flex',
-                    justifyContent: 'space-between',
                     alignItems: 'center',
+                    fontSize: '14px',
                     fontWeight: yaConfirmo ? 'bold' : 'normal'
                   }}
                 >
-                  <span>{jugador.nombre}</span>
-                  <span>{jugador.puntos} pts</span>
+                  <div style={{ flex: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {yaConfirmo ? '✓ ' : ''}{jugador.nombre}
+                  </div>
+                  <div style={{ flex: 0.5, textAlign: 'center' }}>{jugador.partidos_jugados || 0}</div>
+                  <div style={{ flex: 0.5, textAlign: 'center', color: yaConfirmo ? 'white' : '#28a745' }}>{jugador.partidos_ganados || 0}</div>
+                  <div style={{ flex: 0.5, textAlign: 'center', color: yaConfirmo ? 'white' : '#ffc107' }}>{jugador.partidos_empatados || 0}</div>
+                  <div style={{ flex: 0.5, textAlign: 'center', color: yaConfirmo ? 'white' : '#dc3545' }}>{jugador.partidos_perdidos || 0}</div>
+                  <div style={{ flex: 0.7, textAlign: 'right', fontWeight: 'bold' }}>{jugador.puntos}</div>
                 </div>
               );
             })}
@@ -358,12 +393,12 @@ export default function App() {
               cursor: confirmados.length === 10 ? 'pointer' : 'not-allowed'
             }}
           >
-            🔀 Generar Equipos Parejos
+            🔀 Armar Equipos Parejos con {confirmados.length}/10
           </button>
         </div>
       )}
 
-      {/* VISTA DE PUNTOS LUEGO DE SERPENTINA ESTÁNDAR */}
+      {/* VISTA: DETALLE DE EQUIPOS GENERADOS POR SERPENTINA */}
       {equiposListos && !modoPersonalizado && (
         <div>
           <h2>Equipos Listos</h2>
@@ -390,13 +425,13 @@ export default function App() {
             <h3 style={{ marginTop: 0, textAlign: 'center', color: '#333' }}>🏆 Registrar Resultado</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <button disabled={actualizando} onClick={() => registrarResultado('ganaA')} style={{ padding: '10px', backgroundColor: '#0d47a1', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                {actualizando ? 'Guardando...' : 'Ganó Equipo A (+3 pts)'}
+                Ganó Equipo A (+3 pts)
               </button>
               <button disabled={actualizando} onClick={() => registrarResultado('ganaB')} style={{ padding: '10px', backgroundColor: '#b71c1c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                {actualizando ? 'Guardando...' : 'Ganó Equipo B (+3 pts)'}
+                Ganó Equipo B (+3 pts)
               </button>
               <button disabled={actualizando} onClick={() => registrarResultado('empate')} style={{ padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                {actualizando ? 'Guardando...' : 'Hubo Empate (+1 pt)'}
+                Hubo Empate (+1 pt)
               </button>
             </div>
           </div>
