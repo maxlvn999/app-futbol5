@@ -54,7 +54,7 @@ export default function App() {
       setMostrarModalLogin(false);
       setPasswordInput('');
     } else {
-      alert('Contraseña incorrecta, pirata.');
+      alert('Contraseña incorrecta.');
     }
   };
 
@@ -289,7 +289,7 @@ export default function App() {
         ⚽ Mezclador de Fútbol 5 ⚽ 
       </h1>
       <p style={{ textAlign: 'center', color: esAdmin ? '#28a745' : '#aaa', fontSize: '12px', marginTop: 0, marginBottom: '20px', fontWeight: 'bold' }}>
-        {esAdmin ? '⚡ MODO ADMINISTRADOR ACTIVO' : '👀 MODO INVITADO (SOLO LECTURA)'}
+        {esAdmin ? '⚡ MODO ADMINISTRADOR ACTIVO' : 'MODO INVITADO (SOLO LECTURA)'}
       </p>
 
       {/* MODAL FLOTANTE DE LOGIN */}
