@@ -10,14 +10,19 @@ export default function App() {
   const [equiposListos, setEquiposListos] = useState(false);
   const [actualizando, setActualizando] = useState(false);
 
-  // Estados para la gestión de la base de datos
+  // Estados de gestión
   const [nuevoNombre, setNuevoNombre] = useState('');
   const [mostrarGestion, setMostrarGestion] = useState(false);
-
-  // Estado para el flujo alternativo manual
   const [modoPersonalizado, setModoPersonalizado] = useState(false);
 
-  // Traer jugadores desde Supabase
+  // Estados de Autenticación
+  const [esAdmin, setEsAdmin] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [mostrarModalLogin, setMostrarModalLogin] = useState(false);
+
+  // Traer la contraseña desde las variables de entorno de Vite/Vercel
+  const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
+
   const obtenerJugadores = async () => {
     setCargando(true);
     try {
@@ -28,7 +33,6 @@ export default function App() {
       if (error) {
         console.error('Error de Supabase:', error.message);
       } else {
-        // Ordenamos la tabla por puntos (de mayor a menor)
         const ordenadosPorPuntos = (data || []).sort((a, b) => b.puntos - a.puntos);
         setJugadores(ordenadosPorPuntos);
       }
@@ -42,7 +46,44 @@ export default function App() {
     obtenerJugadores();
   }, []);
 
-  // Agregar un jugador inicializando todas las columnas de tu captura
+  // Manejo de Login (Ignora mayúsculas y minúsculas)
+  const manejarLogin = (e) => {
+    e.preventDefault();
+    if (passwordInput.toLowerCase() === ADMIN_PASSWORD.toLowerCase()) {
+      setEsAdmin(true);
+      setMostrarModalLogin(false);
+      setPasswordInput('');
+    } else {
+      alert('Contraseña incorrecta, pirata.');
+    }
+  };
+
+  const manejarLogout = () => {
+    setEsAdmin(false);
+    resetearTodo();
+  };
+
+  // Función para editar nombre de jugador directo en Supabase
+  const editarNombreJugador = async (id, nombreActual) => {
+    const nuevoNombrePrompt = prompt(`Editar nombre para ${nombreActual}:`, nombreActual);
+    if (!nuevoNombrePrompt || !nuevoNombrePrompt.trim() || nuevoNombrePrompt.trim() === nombreActual) return;
+
+    try {
+      const { error } = await supabase
+        .from('jugadores')
+        .update({ nombre: nuevoNombrePrompt.trim() })
+        .eq('id', id);
+
+      if (error) {
+        alert('Error al renombrar: ' + error.message);
+      } else {
+        await obtenerJugadores();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const agregarJugador = async (e) => {
     e.preventDefault();
     if (!nuevoNombre.trim()) return;
@@ -70,7 +111,6 @@ export default function App() {
     }
   };
 
-  // Eliminar jugador del sistema
   const eliminarJugador = async (id, nombre, e) => {
     e.stopPropagation(); 
     if (!confirm(`¿Seguro que querés borrar a ${nombre} del sistema?`)) return;
@@ -95,8 +135,9 @@ export default function App() {
     }
   };
 
-  // Selección/Deselección para el flujo estándar (máx 10)
   const anotadoConfirmado = (jugador) => {
+    if (!esAdmin) return; // Bloqueado si entran como invitados
+    
     if (confirmados.some(c => c.id === jugador.id)) {
       setConfirmados(confirmados.filter(c => c.id !== jugador.id));
       setEquiposListos(false);
@@ -111,7 +152,6 @@ export default function App() {
     }
   };
 
-  // Algoritmo de balanceo por nivel (Serpentina)
   const armarEquiposSerpentina = () => {
     if (confirmados.length !== 10) return;
 
@@ -132,7 +172,6 @@ export default function App() {
     setEquiposListos(true);
   };
 
-  // Asignación a dedo para el modo personalizado (Manual)
   const asignarAEquipoManual = (jugador, destino) => {
     if (destino === 'A' && equipoA.some(j => j.id === jugador.id)) {
       setEquipoA(equipoA.filter(j => j.id !== jugador.id));
@@ -155,7 +194,6 @@ export default function App() {
     }
   };
 
-  // Procesar resultado matemático y guardar en Supabase (Matching con tu captura)
   const registrarResultado = async (resultado) => {
     if (!confirm('¿Estás seguro de registrar este resultado? Esto actualizará las estadísticas.')) return;
     setActualizando(true);
@@ -234,12 +272,49 @@ export default function App() {
   return (
     <div style={{ padding: '40px 15px', fontFamily: 'sans-serif', maxWidth: '550px', margin: '0 auto' }}>
       
-      <h1 style={{ fontSize: '24px', margin: '0 0 20px 0', color: '#ffffff', textAlign: 'center' }}>
+      {/* BOTÓN SUPERIOR DE LOGIN */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+        {esAdmin ? (
+          <button onClick={manejarLogout} style={{ padding: '6px 12px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+            🚪 Salir Modo Admin
+          </button>
+        ) : (
+          <button onClick={() => setMostrarModalLogin(true)} style={{ padding: '6px 12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+            🔐 Ingresar como Admin
+          </button>
+        )}
+      </div>
+
+      <h1 style={{ fontSize: '24px', margin: '0 0 5px 0', color: '#ffffff', textAlign: 'center' }}>
         ⚽ Mezclador de Fútbol 5 ⚽ 
       </h1>
+      <p style={{ textAlign: 'center', color: esAdmin ? '#28a745' : '#aaa', fontSize: '12px', marginTop: 0, marginBottom: '20px', fontWeight: 'bold' }}>
+        {esAdmin ? '⚡ MODO ADMINISTRADOR ACTIVO' : '👀 MODO INVITADO (SOLO LECTURA)'}
+      </p>
 
-      {/* BOTONES AUXILIARES */}
-      {!equiposListos && !modoPersonalizado && (
+      {/* MODAL FLOTANTE DE LOGIN */}
+      {mostrarModalLogin && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <form onSubmit={manejarLogin} style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '8px', maxWidth: '300px', width: '100%', color: '#333' }}>
+            <h3 style={{ marginTop: 0 }}>Acceso de Administrador</h3>
+            <input 
+              type="password" 
+              placeholder="Contraseña..."
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              style={{ width: '92%', padding: '8px', marginBottom: '15px', borderRadius: '4px', border: '1px solid #ccc' }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button type="submit" style={{ flex: 1, padding: '8px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Entrar</button>
+              <button type="button" onClick={() => { setMostrarModalLogin(false); setPasswordInput(''); }} style={{ flex: 1, padding: '8px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Cancelar</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* BOTONES AUXILIARES (SOLO ADMIN) */}
+      {esAdmin && !equiposListos && !modoPersonalizado && (
         <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
           <button 
             onClick={() => setMostrarGestion(!mostrarGestion)}
@@ -257,8 +332,8 @@ export default function App() {
         </div>
       )}
 
-      {/* PANEL DE GESTIÓN (AÑADIR / ELIMINAR) */}
-      {mostrarGestion && !equiposListos && !modoPersonalizado && (
+      {/* PANEL DE GESTIÓN (SOLO ADMIN) */}
+      {esAdmin && mostrarGestion && !equiposListos && !modoPersonalizado && (
         <div style={{ background: '#212529', padding: '15px', borderRadius: '8px', border: '1px solid #343a40', marginBottom: '25px', color: 'white' }}>
           <h4 style={{ margin: '0 0 10px 0' }}>Añadir nuevo jugador al sistema:</h4>
           <form onSubmit={agregarJugador} style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
@@ -272,20 +347,24 @@ export default function App() {
             <button type="submit" style={{ padding: '8px 12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>＋</button>
           </form>
 
-          <h4 style={{ margin: '15px 0 5px 0' }}>Eliminar de la Base de Datos:</h4>
-          <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
+          <h4 style={{ margin: '15px 0 5px 0' }}>Modificar Lista / Base de Datos:</h4>
+          <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
             {jugadores.map(j => (
-              <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #343a40', fontSize: '13px' }}>
+              <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #343a40', fontSize: '13px' }}>
                 <span>{j.nombre}</span>
-                <button onClick={(e) => eliminarJugador(j.id, j.nombre, e)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>❌</button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {/* BOTÓN PARA EDITAR NOMBRE */}
+                  <button onClick={() => editarNombreJugador(j.id, j.nombre)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
+                  <button onClick={(e) => eliminarJugador(j.id, j.nombre, e)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>❌</button>
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* VISTA: PARTIDO PERSONALIZADO (MANUAL) */}
-      {modoPersonalizado && (
+      {/* VISTA: PARTIDO PERSONALIZADO (MANUAL - SOLO ADMIN) */}
+      {modoPersonalizado && esAdmin && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2>Configuración Manual</h2>
@@ -330,12 +409,11 @@ export default function App() {
         </div>
       )}
 
-      {/* VISTA PRINCIPAL: TABLA GRANDE DE POSICIONES (ESTÁNDAR) */}
+      {/* VISTA PRINCIPAL: TABLA GRANDE DE POSICIONES (INVITADOS Y ADMIN) */}
       {!equiposListos && !modoPersonalizado && (
         <div>
           <h2 style={{ fontSize: '18px', borderBottom: '1px solid #444', paddingBottom: '8px' }}>Tabla de Posiciones</h2>
           
-          {/* Encabezado completo */}
           <div style={{ display: 'flex', padding: '10px', fontWeight: 'bold', backgroundColor: '#343a40', borderRadius: '6px 6px 0 0', fontSize: '13px', color: '#fff' }}>
             <div style={{ flex: 2 }}>Jugador</div>
             <div style={{ flex: 0.5, textAlign: 'center' }}>J</div>
@@ -345,7 +423,6 @@ export default function App() {
             <div style={{ flex: 0.7, textAlign: 'right' }}>Pts</div>
           </div>
 
-          {/* Renderizado de filas interactivo */}
           <div style={{ marginBottom: '25px' }}>
             {jugadores.map((jugador) => {
               const yaConfirmo = confirmados.some(c => c.id === jugador.id);
@@ -359,7 +436,7 @@ export default function App() {
                     borderBottom: '1px solid #343a40',
                     backgroundColor: yaConfirmo ? '#28a745' : '#f8f9fa',
                     color: yaConfirmo ? 'white' : '#333',
-                    cursor: 'pointer',
+                    cursor: esAdmin ? 'pointer' : 'default', 
                     alignItems: 'center',
                     fontSize: '14px',
                     fontWeight: yaConfirmo ? 'bold' : 'normal'
@@ -378,28 +455,35 @@ export default function App() {
             })}
           </div>
 
-          <button
-            disabled={confirmados.length !== 10}
-            onClick={armarEquiposSerpentina}
-            style={{
-              width: '100%',
-              padding: '15px',
-              backgroundColor: confirmados.length === 10 ? '#007bff' : '#555',
-              color: 'white',
-              border: 'none',
-              fontSize: '16px',
-              fontWeight: 'bold',
-              borderRadius: '6px',
-              cursor: confirmados.length === 10 ? 'pointer' : 'not-allowed'
-            }}
-          >
-            🔀 Armar Equipos Parejos con {confirmados.length}/10
-          </button>
+          {/* EL BOTÓN DE ARMAR EQUIPOS SÓLO RESPONDE/SE MUESTRA SI ES ADMIN */}
+          {esAdmin ? (
+            <button
+              disabled={confirmados.length !== 10}
+              onClick={armarEquiposSerpentina}
+              style={{
+                width: '100%',
+                padding: '15px',
+                backgroundColor: confirmados.length === 10 ? '#007bff' : '#555',
+                color: 'white',
+                border: 'none',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                borderRadius: '6px',
+                cursor: confirmados.length === 10 ? 'pointer' : 'not-allowed'
+              }}
+            >
+              🔀 Armar Equipos Parejos con {confirmados.length}/10
+            </button>
+          ) : (
+            <p style={{ textAlign: 'center', color: '#888', fontSize: '13px', fontStyle: 'italic' }}>
+              🔒 El Administrador debe loguearse para armar partidos o cargar resultados.
+            </p>
+          )}
         </div>
       )}
 
-      {/* VISTA: DETALLE DE EQUIPOS GENERADOS POR SERPENTINA */}
-      {equiposListos && !modoPersonalizado && (
+      {/* VISTA: DETALLE DE EQUIPOS GENERADOS (SÓLO SI LLEGASTE ACÁ SIENDO ADMIN) */}
+      {equiposListos && !modoPersonalizado && esAdmin && (
         <div>
           <h2>Equipos Listos</h2>
           
