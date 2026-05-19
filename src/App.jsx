@@ -54,7 +54,7 @@ export default function App() {
       setMostrarModalLogin(false);
       setPasswordInput('');
     } else {
-      alert('Contraseña incorrecta.');
+      alert('Contraseña incorrecta');
     }
   };
 
@@ -84,6 +84,24 @@ export default function App() {
     }
   };
 
+  // NUEVO: Alternar el rol de arquero (True / False) en Supabase
+  const alternarRolArquero = async (id, estadoActual) => {
+    try {
+      const { error } = await supabase
+        .from('jugadores')
+        .update({ es_arquero: !estadoActual })
+        .eq('id', id);
+
+      if (error) {
+        alert('Error al cambiar rol: ' + error.message);
+      } else {
+        await obtenerJugadores();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const agregarJugador = async (e) => {
     e.preventDefault();
     if (!nuevoNombre.trim()) return;
@@ -97,7 +115,8 @@ export default function App() {
           partidos_jugados: 0,
           partidos_ganados: 0,
           partidos_perdidos: 0,
-          partidos_empatados: 0
+          partidos_empatados: 0,
+          es_arquero: false // Por defecto entra como jugador de campo
         }]);
 
       if (error) {
@@ -136,7 +155,7 @@ export default function App() {
   };
 
   const anotadoConfirmado = (jugador) => {
-    if (!esAdmin) return; // Bloqueado si entran como invitados
+    if (!esAdmin) return; 
     
     if (confirmados.some(c => c.id === jugador.id)) {
       setConfirmados(confirmados.filter(c => c.id !== jugador.id));
@@ -152,18 +171,44 @@ export default function App() {
     }
   };
 
+  // NUEVA LOGICA: Serpentina inteligente con separación de arqueros
   const armarEquiposSerpentina = () => {
     if (confirmados.length !== 10) return;
 
-    const ordenadosPorNivel = [...confirmados].sort((a, b) => b.puntos - a.puntos);
     const a = [];
     const b = [];
 
-    ordenadosPorNivel.forEach((jugador, index) => {
-      if (index === 0 || index === 3 || index === 4 || index === 7 || index === 8) {
+    // 1. Filtrar arqueros y jugadores de campo entre los 10 confirmados
+    const arquerosConfirmados = confirmados.filter(j => j.es_arquero);
+    const campoConfirmados = confirmados.filter(j => !j.es_arquero);
+
+    // 2. Si hay exactamente 2 arqueros, los separamos de entrada
+    if (arquerosConfirmados.length === 2) {
+      // Ordenamos los arqueros por nivel para que el mejor vaya a un lado de forma predictiva
+      arquerosConfirmados.sort((x, y) => y.puntos - x.puntos);
+      a.push(arquerosConfirmados[0]); // El mejor arquero al A
+      b.push(arquerosConfirmados[1]); // El otro arquero al B
+    } else {
+      // Si hay 1 solo o ninguno, se tratan todos juntos en la bolsa general
+      campoConfirmados.push(...arquerosConfirmados);
+    }
+
+    // 3. Ordenar el resto de los jugadores de campo por nivel
+    const restoOrdenado = [...campoConfirmados].sort((x, y) => y.puntos - x.puntos);
+
+    // 4. Distribuir el resto usando serpentina adaptada según el espacio libre
+    restoOrdenado.forEach((jugador) => {
+      if (a.length >= 5) {
+        b.push(jugador);
+      } else if (b.length >= 5) {
         a.push(jugador);
       } else {
-        b.push(jugador);
+        // Lógica de balanceo comparando el puntaje actual acumulado de cada team
+        if (calcularTotalPuntos(a) <= calcularTotalPuntos(b)) {
+          a.push(jugador);
+        } else {
+          b.push(jugador);
+        }
       }
     });
 
@@ -348,12 +393,15 @@ export default function App() {
           </form>
 
           <h4 style={{ margin: '15px 0 5px 0' }}>Modificar Lista / Base de Datos:</h4>
-          <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+          <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
             {jugadores.map(j => (
               <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #343a40', fontSize: '13px' }}>
-                <span>{j.nombre}</span>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  {/* BOTÓN PARA EDITAR NOMBRE */}
+                <span>{j.nombre} {j.es_arquero ? '🧤' : ''}</span>
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                  {/* BOTÓN PARA CAMBIAR ROL ARQUERO */}
+                  <button onClick={() => alternarRolArquero(j.id, j.es_arquero)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }} title="Cambiar Rol">
+                    {j.es_arquero ? '🏃‍♂️' : '🧤'}
+                  </button>
                   <button onClick={() => editarNombreJugador(j.id, j.nombre)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                   <button onClick={(e) => eliminarJugador(j.id, j.nombre, e)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>❌</button>
                 </div>
@@ -388,7 +436,7 @@ export default function App() {
               const enB = equipoB.some(x => x.id === j.id);
               return (
                 <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', marginBottom: '6px', background: '#f8f9fa', borderRadius: '6px', color: '#333' }}>
-                  <span>{j.nombre}</span>
+                  <span>{j.nombre} {j.es_arquero ? '🧤' : ''}</span>
                   <div style={{ display: 'flex', gap: '5px' }}>
                     <button onClick={() => asignarAEquipoManual(j, 'A')} style={{ padding: '6px 12px', backgroundColor: enA ? '#007bff' : '#ccc', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>A</button>
                     <button onClick={() => asignarAEquipoManual(j, 'B')} style={{ padding: '6px 12px', backgroundColor: enB ? '#dc3545' : '#ccc', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>B</button>
@@ -443,7 +491,7 @@ export default function App() {
                   }}
                 >
                   <div style={{ flex: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {yaConfirmo ? '✓ ' : ''}{jugador.nombre}
+                    {yaConfirmo ? '✓ ' : ''}{jugador.nombre} {jugador.es_arquero ? '🧤' : ''}
                   </div>
                   <div style={{ flex: 0.5, textAlign: 'center' }}>{jugador.partidos_jugados || 0}</div>
                   <div style={{ flex: 0.5, textAlign: 'center', color: yaConfirmo ? 'white' : '#28a745' }}>{jugador.partidos_ganados || 0}</div>
@@ -455,7 +503,7 @@ export default function App() {
             })}
           </div>
 
-          {/* EL BOTÓN DE ARMAR EQUIPOS SÓLO RESPONDE/SE MUESTRA SI ES ADMIN */}
+          {/* EL BOTÓN DE ARMAR EQUIPOS SÓLO RESPONDE SI ES ADMIN */}
           {esAdmin ? (
             <button
               disabled={confirmados.length !== 10}
@@ -482,7 +530,7 @@ export default function App() {
         </div>
       )}
 
-      {/* VISTA: DETALLE DE EQUIPOS GENERADOS (SÓLO SI LLEGASTE ACÁ SIENDO ADMIN) */}
+      {/* VISTA: DETALLE DE EQUIPOS GENERADOS (SÓLO ADMIN) */}
       {equiposListos && !modoPersonalizado && esAdmin && (
         <div>
           <h2>Equipos Listos</h2>
@@ -490,7 +538,7 @@ export default function App() {
           <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', border: '1px solid #90caf9', marginBottom: '15px' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#0d47a1' }}>EQUIPO A</h3>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {equipoA.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} ({j.puntos} pts)</li>)}
+              {equipoA.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} {j.es_arquero ? '🧤' : ''} ({j.puntos} pts)</li>)}
             </ul>
             <hr style={{ border: '0', borderTop: '1px solid #90caf9', margin: '10px 0' }} />
             <strong style={{ color: '#333' }}>Nivel Total: {calcularTotalPuntos(equipoA)} pts</strong>
@@ -499,7 +547,7 @@ export default function App() {
           <div style={{ background: '#ffebee', padding: '15px', borderRadius: '8px', border: '1px solid #ef9a9a', marginBottom: '15px' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#b71c1c' }}>EQUIPO B</h3>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {equipoB.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} ({j.puntos} pts)</li>)}
+              {equipoB.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} {j.es_arquero ? '🧤' : ''} ({j.puntos} pts)</li>)}
             </ul>
             <hr style={{ border: '0', borderTop: '1px solid #ef9a9a', margin: '10px 0' }} />
             <strong style={{ color: '#333' }}>Nivel Total: {calcularTotalPuntos(equipoB)} pts</strong>
