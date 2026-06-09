@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 
 export default function App() {
@@ -9,6 +9,8 @@ export default function App() {
   const [equipoB, setEquipoB] = useState([]);
   const [equiposListos, setEquiposListos] = useState(false);
   const [actualizando, setActualizando] = useState(false);
+  const [golesA, setGolesA] = useState('');
+  const [golesB, setGolesB] = useState('');
 
   // Estados de gestión
   const [nuevoNombre, setNuevoNombre] = useState('');
@@ -23,7 +25,17 @@ export default function App() {
   // Traer la contraseña desde las variables de entorno de Vite/Vercel
   const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
 
-  const obtenerJugadores = async () => {
+  const obtenerDiferenciaGoles = (jugador) => jugador.diferencia_goles || 0;
+  const formatearDiferenciaGoles = (valor) => {
+    const diferencia = Number(valor) || 0;
+    return diferencia > 0 ? `+${diferencia}` : diferencia;
+  };
+  const calcularNivelJugador = (jugador) => (jugador.puntos || 0) + obtenerDiferenciaGoles(jugador);
+  const calcularTotalPuntos = (equipo) => equipo.reduce((total, j) => total + (j.puntos || 0), 0);
+  const calcularTotalDiferenciaGoles = (equipo) => equipo.reduce((total, j) => total + obtenerDiferenciaGoles(j), 0);
+  const calcularNivelEquipo = (equipo) => equipo.reduce((total, j) => total + calcularNivelJugador(j), 0);
+
+  const obtenerJugadores = useCallback(async () => {
     setCargando(true);
     try {
       const { data, error } = await supabase
@@ -33,18 +45,21 @@ export default function App() {
       if (error) {
         console.error('Error de Supabase:', error.message);
       } else {
-        const ordenadosPorPuntos = (data || []).sort((a, b) => b.puntos - a.puntos);
+        const ordenadosPorPuntos = (data || []).sort((a, b) => {
+          if ((b.puntos || 0) !== (a.puntos || 0)) return (b.puntos || 0) - (a.puntos || 0);
+          return obtenerDiferenciaGoles(b) - obtenerDiferenciaGoles(a);
+        });
         setJugadores(ordenadosPorPuntos);
       }
     } catch (err) {
       console.error('Error de conexión:', err);
     }
     setCargando(false);
-  };
+  }, []);
 
   useEffect(() => {
-    obtenerJugadores();
-  }, []);
+    void Promise.resolve().then(obtenerJugadores);
+  }, [obtenerJugadores]);
 
   // Manejo de Login (Ignora mayúsculas y minúsculas)
   const manejarLogin = (e) => {
@@ -102,6 +117,33 @@ export default function App() {
     }
   };
 
+  const editarDiferenciaGoles = async (id, nombre, diferenciaActual) => {
+    const valorActual = obtenerDiferenciaGoles({ diferencia_goles: diferenciaActual });
+    const nuevoValorPrompt = prompt(`Editar diferencia de goles para ${nombre}:`, valorActual);
+    if (nuevoValorPrompt === null) return;
+
+    const nuevaDiferencia = Number(nuevoValorPrompt);
+    if (!Number.isInteger(nuevaDiferencia)) {
+      alert('Ingresá un número entero para la diferencia de goles.');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('jugadores')
+        .update({ diferencia_goles: nuevaDiferencia })
+        .eq('id', id);
+
+      if (error) {
+        alert('Error al editar diferencia de goles: ' + error.message);
+      } else {
+        await obtenerJugadores();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const agregarJugador = async (e) => {
     e.preventDefault();
     if (!nuevoNombre.trim()) return;
@@ -116,6 +158,7 @@ export default function App() {
           partidos_ganados: 0,
           partidos_perdidos: 0,
           partidos_empatados: 0,
+          diferencia_goles: 0,
           es_arquero: false // Por defecto entra como jugador de campo
         }]);
 
@@ -185,7 +228,7 @@ export default function App() {
     // 2. Si hay exactamente 2 arqueros, los separamos de entrada
     if (arquerosConfirmados.length === 2) {
       // Ordenamos los arqueros por nivel para que el mejor vaya a un lado de forma predictiva
-      arquerosConfirmados.sort((x, y) => y.puntos - x.puntos);
+      arquerosConfirmados.sort((x, y) => calcularNivelJugador(y) - calcularNivelJugador(x));
       a.push(arquerosConfirmados[0]); // El mejor arquero al A
       b.push(arquerosConfirmados[1]); // El otro arquero al B
     } else {
@@ -194,7 +237,7 @@ export default function App() {
     }
 
     // 3. Ordenar el resto de los jugadores de campo por nivel
-    const restoOrdenado = [...campoConfirmados].sort((x, y) => y.puntos - x.puntos);
+    const restoOrdenado = [...campoConfirmados].sort((x, y) => calcularNivelJugador(y) - calcularNivelJugador(x));
 
     // 4. Distribuir el resto usando serpentina adaptada según el espacio libre
     restoOrdenado.forEach((jugador) => {
@@ -203,8 +246,8 @@ export default function App() {
       } else if (b.length >= 5) {
         a.push(jugador);
       } else {
-        // Lógica de balanceo comparando el puntaje actual acumulado de cada team
-        if (calcularTotalPuntos(a) <= calcularTotalPuntos(b)) {
+        // Lógica de balanceo comparando puntos y diferencia de gol acumulada.
+        if (calcularNivelEquipo(a) <= calcularNivelEquipo(b)) {
           a.push(jugador);
         } else {
           b.push(jugador);
@@ -239,11 +282,27 @@ export default function App() {
     }
   };
 
-  const registrarResultado = async (resultado) => {
+  const registrarResultado = async () => {
+    if (golesA === '' || golesB === '') {
+      alert('Ingresá los goles de ambos equipos antes de registrar el resultado.');
+      return;
+    }
+
+    const marcadorA = Number(golesA);
+    const marcadorB = Number(golesB);
+
+    if (!Number.isInteger(marcadorA) || !Number.isInteger(marcadorB) || marcadorA < 0 || marcadorB < 0) {
+      alert('Ingresá los goles de ambos equipos con números enteros mayores o iguales a 0.');
+      return;
+    }
+
     if (!confirm('¿Estás seguro de registrar este resultado? Esto actualizará las estadísticas.')) return;
     setActualizando(true);
 
     const todosLosJugadoresDelPartido = modoPersonalizado ? [...equipoA, ...equipoB] : confirmados;
+    const diferenciaA = marcadorA - marcadorB;
+    const diferenciaB = marcadorB - marcadorA;
+    const resultado = marcadorA === marcadorB ? 'empate' : marcadorA > marcadorB ? 'ganaA' : 'ganaB';
 
     try {
       const promesas = todosLosJugadoresDelPartido.map(jugador => {
@@ -252,9 +311,16 @@ export default function App() {
         let partidosGanados = jugador.partidos_ganados || 0;
         let partidosPerdidos = jugador.partidos_perdidos || 0;
         let partidosEmpatados = jugador.partidos_empatados || 0; 
+        let diferenciaGoles = obtenerDiferenciaGoles(jugador);
 
         const estaEnA = equipoA.some(j => j.id === jugador.id);
         const estaEnB = equipoB.some(j => j.id === jugador.id);
+
+        if (estaEnA) {
+          diferenciaGoles += diferenciaA;
+        } else if (estaEnB) {
+          diferenciaGoles += diferenciaB;
+        }
 
         if (resultado === 'empate') {
           nuevosPuntos += 1;
@@ -282,7 +348,8 @@ export default function App() {
             partidos_jugados: partidosJugados,
             partidos_ganados: partidosGanados,
             partidos_perdidos: partidosPerdidos,
-            partidos_empatados: partidosEmpatados 
+            partidos_empatados: partidosEmpatados,
+            diferencia_goles: diferenciaGoles
           })
           .eq('id', jugador.id);
       });
@@ -306,9 +373,9 @@ export default function App() {
     setEquipoB([]);
     setEquiposListos(false);
     setModoPersonalizado(false);
+    setGolesA('');
+    setGolesB('');
   };
-
-  const calcularTotalPuntos = (equipo) => equipo.reduce((total, j) => total + j.puntos, 0);
 
   if (cargando) {
     return <div style={{ padding: '20px', fontFamily: 'sans-serif', color: 'white' }}>Conectando con Supabase...</div>;
@@ -396,12 +463,13 @@ export default function App() {
           <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
             {jugadores.map(j => (
               <div key={j.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #343a40', fontSize: '13px' }}>
-                <span>{j.nombre} {j.es_arquero ? '🧤' : ''}</span>
+                <span>{j.nombre} {j.es_arquero ? '🧤' : ''} <small style={{ color: '#adb5bd' }}>DG {formatearDiferenciaGoles(j.diferencia_goles)}</small></span>
                 <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
                   {/* BOTÓN PARA CAMBIAR ROL ARQUERO */}
                   <button onClick={() => alternarRolArquero(j.id, j.es_arquero)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }} title="Cambiar Rol">
                     {j.es_arquero ? '🏃‍♂️' : '🧤'}
                   </button>
+                  <button onClick={() => editarDiferenciaGoles(j.id, j.nombre, j.diferencia_goles)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: 'white', fontWeight: 'bold' }} title="Editar diferencia de goles">DG</button>
                   <button onClick={() => editarNombreJugador(j.id, j.nombre)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }}>✏️</button>
                   <button onClick={(e) => eliminarJugador(j.id, j.nombre, e)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>❌</button>
                 </div>
@@ -448,11 +516,17 @@ export default function App() {
 
           <div style={{ marginTop: '20px', padding: '15px', background: '#212529', borderRadius: '8px' }}>
             <h4 style={{ marginTop: 0, textAlign: 'center', color: 'white' }}>🏆 Registrar Carga Manual</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <button disabled={actualizando || equipoA.length === 0} onClick={() => registrarResultado('ganaA')} style={{ padding: '10px', backgroundColor: '#0d47a1', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Ganó el Equipo A</button>
-              <button disabled={actualizando || equipoB.length === 0} onClick={() => registrarResultado('ganaB')} style={{ padding: '10px', backgroundColor: '#b71c1c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Ganó el Equipo B</button>
-              <button disabled={actualizando || (equipoA.length === 0 && equipoB.length === 0)} onClick={() => registrarResultado('empate')} style={{ padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Empate</button>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+              <label style={{ flex: 1, color: 'white', fontSize: '12px', fontWeight: 'bold' }}>
+                Goles A
+                <input type="number" min="0" value={golesA} onChange={(e) => setGolesA(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', marginTop: '4px', padding: '8px', borderRadius: '4px', border: '1px solid #495057' }} />
+              </label>
+              <label style={{ flex: 1, color: 'white', fontSize: '12px', fontWeight: 'bold' }}>
+                Goles B
+                <input type="number" min="0" value={golesB} onChange={(e) => setGolesB(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', marginTop: '4px', padding: '8px', borderRadius: '4px', border: '1px solid #495057' }} />
+              </label>
             </div>
+            <button disabled={actualizando || equipoA.length === 0 || equipoB.length === 0} onClick={registrarResultado} style={{ width: '100%', padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Registrar Resultado</button>
           </div>
         </div>
       )}
@@ -468,6 +542,7 @@ export default function App() {
             <div style={{ flex: 0.5, textAlign: 'center', color: '#28a745' }}>G</div>
             <div style={{ flex: 0.5, textAlign: 'center', color: '#ffc107' }}>E</div>
             <div style={{ flex: 0.5, textAlign: 'center', color: '#dc3545' }}>P</div>
+            <div style={{ flex: 0.6, textAlign: 'center' }}>DG</div>
             <div style={{ flex: 0.7, textAlign: 'right' }}>Pts</div>
           </div>
 
@@ -497,6 +572,7 @@ export default function App() {
                   <div style={{ flex: 0.5, textAlign: 'center', color: yaConfirmo ? 'white' : '#28a745' }}>{jugador.partidos_ganados || 0}</div>
                   <div style={{ flex: 0.5, textAlign: 'center', color: yaConfirmo ? 'white' : '#ffc107' }}>{jugador.partidos_empatados || 0}</div>
                   <div style={{ flex: 0.5, textAlign: 'center', color: yaConfirmo ? 'white' : '#dc3545' }}>{jugador.partidos_perdidos || 0}</div>
+                  <div style={{ flex: 0.6, textAlign: 'center' }}>{formatearDiferenciaGoles(jugador.diferencia_goles)}</div>
                   <div style={{ flex: 0.7, textAlign: 'right', fontWeight: 'bold' }}>{jugador.puntos}</div>
                 </div>
               );
@@ -538,34 +614,34 @@ export default function App() {
           <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', border: '1px solid #90caf9', marginBottom: '15px' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#0d47a1' }}>EQUIPO A</h3>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {equipoA.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} {j.es_arquero ? '🧤' : ''} ({j.puntos} pts)</li>)}
+              {equipoA.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} {j.es_arquero ? '🧤' : ''} ({j.puntos} pts, DG {formatearDiferenciaGoles(j.diferencia_goles)})</li>)}
             </ul>
             <hr style={{ border: '0', borderTop: '1px solid #90caf9', margin: '10px 0' }} />
-            <strong style={{ color: '#333' }}>Nivel Total: {calcularTotalPuntos(equipoA)} pts</strong>
+            <strong style={{ color: '#333' }}>Nivel Total: {calcularNivelEquipo(equipoA)} ({calcularTotalPuntos(equipoA)} pts, DG {formatearDiferenciaGoles(calcularTotalDiferenciaGoles(equipoA))})</strong>
           </div>
 
           <div style={{ background: '#ffebee', padding: '15px', borderRadius: '8px', border: '1px solid #ef9a9a', marginBottom: '15px' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#b71c1c' }}>EQUIPO B</h3>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {equipoB.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} {j.es_arquero ? '🧤' : ''} ({j.puntos} pts)</li>)}
+              {equipoB.map(j => <li key={j.id} style={{ padding: '4px 0', color: '#333' }}>• {j.nombre} {j.es_arquero ? '🧤' : ''} ({j.puntos} pts, DG {formatearDiferenciaGoles(j.diferencia_goles)})</li>)}
             </ul>
             <hr style={{ border: '0', borderTop: '1px solid #ef9a9a', margin: '10px 0' }} />
-            <strong style={{ color: '#333' }}>Nivel Total: {calcularTotalPuntos(equipoB)} pts</strong>
+            <strong style={{ color: '#333' }}>Nivel Total: {calcularNivelEquipo(equipoB)} ({calcularTotalPuntos(equipoB)} pts, DG {formatearDiferenciaGoles(calcularTotalDiferenciaGoles(equipoB))})</strong>
           </div>
 
           <div style={{ marginTop: '30px', padding: '15px', background: '#f8f9fa', borderRadius: '8px', border: '1px solid #ddd' }}>
             <h3 style={{ marginTop: 0, textAlign: 'center', color: '#333' }}>🏆 Registrar Resultado</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button disabled={actualizando} onClick={() => registrarResultado('ganaA')} style={{ padding: '10px', backgroundColor: '#0d47a1', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Ganó Equipo A (+3 pts)
-              </button>
-              <button disabled={actualizando} onClick={() => registrarResultado('ganaB')} style={{ padding: '10px', backgroundColor: '#b71c1c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Ganó Equipo B (+3 pts)
-              </button>
-              <button disabled={actualizando} onClick={() => registrarResultado('empate')} style={{ padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                Hubo Empate (+1 pt)
-              </button>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+              <label style={{ flex: 1, color: '#333', fontSize: '12px', fontWeight: 'bold' }}>
+                Goles A
+                <input type="number" min="0" value={golesA} onChange={(e) => setGolesA(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', marginTop: '4px', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+              </label>
+              <label style={{ flex: 1, color: '#333', fontSize: '12px', fontWeight: 'bold' }}>
+                Goles B
+                <input type="number" min="0" value={golesB} onChange={(e) => setGolesB(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', marginTop: '4px', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+              </label>
             </div>
+            <button disabled={actualizando} onClick={registrarResultado} style={{ width: '100%', padding: '10px', backgroundColor: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Registrar Resultado</button>
           </div>
 
           <button
